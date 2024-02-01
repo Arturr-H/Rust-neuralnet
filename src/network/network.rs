@@ -25,12 +25,26 @@ pub struct Network {
     batch_size: usize,
     momentum: f64,
     regularization: f64,
+
+    #[serde(skip)]
+    // Needs to be optional because fn(...) -> can't
+    // implement the Default trait as far as I know.
+    is_correct: Option<fn(&Vec<f64>, &Vec<f64>) -> bool>
 }
 
 impl Network {
     /// Documentation on how individual layers are initialized are
     /// located in `layer.rs`
-    pub fn new<const N: usize>(layer_sizes: [usize; N], batch_size: usize, learn_rate: LearnRate, momentum: f64, regularization: f64, cost: CostType, activation: NetworkActivations) -> Self {
+    pub fn new<const N: usize>(
+        layer_sizes: [usize; N],
+        batch_size: usize,
+        learn_rate: LearnRate,
+        momentum: f64,
+        regularization: f64,
+        cost: CostType,
+        activation: NetworkActivations,
+        is_correct: fn(&Vec<f64>, &Vec<f64>) -> bool
+    ) -> Self {
         let mut layers: Vec<Layer> = Vec::new();
         let mut layer_learn_data: Vec<LearnData> = Vec::new();
 
@@ -51,7 +65,7 @@ impl Network {
         Self {
             layers, cost, layer_learn_data,
             learn_rate, batch_size, momentum,
-            regularization
+            regularization, is_correct: Some(is_correct)
         }
     }
 
@@ -82,12 +96,13 @@ impl Network {
     /// WARNING please don't forget to set the input
     /// and output layer sizes according to your data
     pub fn train(&mut self, dataset: Vec<(Vec<f64>, Vec<f64>)>) -> () {
+        let mut correct_p = vec![false; 100];
         let mut avg_cost = vec![1.0; 100];
         let mut iteration: usize = 0;
         let dataset_len = dataset.len();
         let batch_size = self.batch_size;
 
-        loop {
+        'outer: loop {
             // Iterate over batches
             for inner in 0..batch_size {
                 let (input, expected_output) = &dataset[iteration];
@@ -100,21 +115,21 @@ impl Network {
                 self.update_gradients((&input, expected_output.clone()));
 
                 iteration += 1;
-                iteration_status_display(&self, iteration, self.learn_rate.get(), cost, &mut avg_cost, &predicted_output, &expected_output);
+                iteration_status_display(&self, iteration, self.learn_rate.get(), cost, &mut correct_p, &mut avg_cost, &predicted_output, &expected_output);
+
+                if iteration > dataset_len - 1 {
+                    break 'outer;
+                }
             };
 
             // Apply gradients
-            println!("{}", colorize(Color::BrightGreen, "▶︎▶︎ Applying gradients ◀︎◀︎"));
+            // println!("{}", colorize(Color::BrightGreen, "▶︎▶︎ Applying gradients ◀︎◀︎"));
             self.apply_gradients();
-
-            if iteration > 20000 {
-                break;
-            }
         }
 
         // Save network
         println!("{}", colorize(Color::Yellow, "▶︎▶︎ Saving network ◀︎◀︎"));
-        self.save("./src/saves/network");
+        self.save("./src/saves/network_v2");
     }
 
     pub fn update_gradients(&mut self, datapoint: (&Vec<f64>, Vec<f64>)) -> () {
@@ -187,31 +202,34 @@ fn iteration_status_display(
     iteration: usize,
     learn_rate: f64,
     cost: f64,
+    correct_p: &mut Vec<bool>,
     avg_cost: &mut Vec<f64>,
     predicted_output: &Vec<f64>,
     expected_output: &Vec<f64>
 ) -> () {
     avg_cost.rotate_left(1);
-    avg_cost[9] = cost;
+    avg_cost[99] = cost;
 
     let avg_cost_ = avg_cost.iter().sum::<f64>() / 100.0;
-    let avg_cost_string = format!("{:.8}", avg_cost_);
+    let avg_cost_string = format!("{:.6}", avg_cost_);
     let avg_cost_color = if avg_cost_.abs() > 0.1 { Color::Red } else { Color::Blue };
-
-    let predict_max_idx = predicted_output
-        .iter()
-        .enumerate()
-        .max_by(|(_, a), (_, b)| a.total_cmp(b))
-        .map(|(index, _)| index).unwrap();
-    let expect_idx = expected_output.iter().position(|&e| e == 1.0).unwrap();
-
+    let is_correct = net.is_correct.unwrap()(predicted_output, expected_output);
+    correct_p.rotate_left(1);
+    correct_p[99] = is_correct;
+    let avg_correct_ = correct_p.iter().map(|&e| e as u8).sum::<u8>() as f64 / 100.0;
+    
     println!("{} {} {} {} {}",
         colorize(avg_cost_color, stylize(Style::Bold, stylize(Style::Reverse, " cost "))),
         format!("{}", colorize(avg_cost_color, stylize(Style::Bold, avg_cost_string))),
         colorize(avg_cost_color, stylize(Style::Reverse, format!("{:^5}", iteration))),
 
         format!("LR: {}", format_f64(&learn_rate)),
-        if expect_idx == predict_max_idx { "✅" } else { " " }
+        format!("{:^5} {} [{}{}]",
+            format!("{:.0}%", avg_correct_ * 100.0),
+            if is_correct { "✅" } else { "🚫" },
+            colorize(Color::Blue, "◼︎".repeat((50.0 * avg_correct_) as usize)),
+            stylize(Style::Dim, colorize(Color::Black, "◼︎".repeat((50.0 * (1.0 - avg_correct_)) as usize)))
+        )
     );
     // println!("[ {}] {} [ {}]      ô {} {}",
     //     colorize(Color::White, display_array(predicted_output)),

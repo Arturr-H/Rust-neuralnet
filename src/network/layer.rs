@@ -10,16 +10,16 @@ use crate::{activation::Activation, cost::Cost, learn_data::LearnData};
 #[derive(Serialize, Deserialize)]
 pub struct Layer {
     /// A two dimensional array containing each neurons
-    /// weights. The dimensions are: `[[w; CURR_LAYER_SIZE]; PREV_LAYER_SIZE]`.
+    /// weights - but flattened to one dimension. The dimensions
+    /// (if 2d) are: `[[w; CURR_LAYER_SIZE]; PREV_LAYER_SIZE]`.
     /// 
     /// So the columns in that array depict each neuron in the previous layer, 
     /// and the rows are each weight which that neuron "owns". Therefore if
     /// you take weights[0..i][a] you'll get each weight which connects
     /// to the neuron with index a in the next layer.
-    /// ? Todo: Make this one-dimensional for efficiency?
-    pub weights: Vec<Vec<f64>>,
-    pub cost_gradient_weights: Vec<Vec<f64>>,
-    weight_velocities: Vec<Vec<f64>>,
+    pub weights: Vec<f64>,
+    pub cost_gradient_weights: Vec<f64>,
+    weight_velocities: Vec<f64>,
 
     /// A one-dimensional array containing a bias
     /// for each neuron in the current layer
@@ -34,6 +34,9 @@ pub struct Layer {
 
     /// The amount of neurons in the current layer
     size: usize,
+
+    /// The amount of neurons in the previous layer
+    prev_size: usize,
 }
 
 impl Layer {
@@ -60,12 +63,13 @@ impl Layer {
         let normal_distribution = Normal::new(0.0, std).unwrap();
         let mut rng = thread_rng();
 
-        let weights: Vec<Vec<f64>> = (0..prev_layer_size)
+        let weights: Vec<f64> = (0..prev_layer_size)
             .map(|_| {
                 (0..current_layer_size)
                     .map(|_| normal_distribution.sample(&mut rng))
-                    .collect()
+                    .collect::<Vec<f64>>()
             })
+            .flatten()
             .collect();
 
         return Self {
@@ -74,11 +78,12 @@ impl Layer {
             bias_velocities: vec![0.0; current_layer_size],
 
             weights,
-            cost_gradient_weights: vec![vec![0.0; current_layer_size]; prev_layer_size],
-            weight_velocities: vec![vec![0.0; current_layer_size]; prev_layer_size],
+            cost_gradient_weights: vec![0.0; current_layer_size * prev_layer_size],
+            weight_velocities: vec![0.0; current_layer_size * prev_layer_size],
 
             activation,
             size: current_layer_size,
+            prev_size: prev_layer_size
         }
     }
 
@@ -95,10 +100,9 @@ impl Layer {
         let mut output = self.biases.clone();
 
         // Each previous neuron iter
-        for (index, weight_matrix) in self.weights.iter().enumerate() {
-            // Each weight conencting to the next layer
-            for (weight_index, weight) in weight_matrix.iter().enumerate() {
-                output[weight_index] += inputs[index] * weight;
+        for index in 0..self.prev_size {
+            for weight_index in 0..self.size {
+                output[weight_index] += inputs[index] * self.weight(index, weight_index);
             }
         }
 
@@ -142,13 +146,13 @@ impl Layer {
         for node_index in 0..self.size {
             let mut node_value = 0.0;
 
-            for (weight_index, weight) in old_layer.weights[node_index].iter().enumerate() {
-                node_value += weight * old_node_values[weight_index];
+            for i in 0..old_node_values.len() {
+                node_value += old_layer.weight(node_index, i) * old_node_values[i];
             }
 
-            let a_wrt_z_deriv = node_value * (self.activation.derivative)(learn_data.weighted_inputs[node_index]);
+            let a_wrt_z_deriv = (self.activation.derivative)(learn_data.weighted_inputs[node_index]);
             // TODO RESEARCH WHY NET PERFORMS BETTER WITHOUT a_wrt_z_deriv
-            learn_data.node_values[node_index] = node_value;// * a_wrt_z_deriv;
+            learn_data.node_values[node_index] = node_value * a_wrt_z_deriv;
         }
     }
 
@@ -156,14 +160,14 @@ impl Layer {
     /// * [Rewritten] ✅✅✅
     pub fn update_gradients(&mut self, learn_data: &mut LearnData) -> () {
         // Iterates over previous neurons (w_mtx_idx = prev_neuron_idx)
-        for (w_mtx_idx, w_mtx) in self.weights.iter().enumerate() {
-            let input = learn_data.inputs[w_mtx_idx];
+        for prev_neuron in 0..self.prev_size {
+            let input = learn_data.inputs[prev_neuron];
 
             // Iterates over each weight previous neuron "owns"
             // which connects to neuron in the current layer.
-            for (w_index, w) in w_mtx.iter().enumerate() {
-                let cost_wrt_weight_deriv = input * learn_data.node_values[w_index];
-                self.cost_gradient_weights[w_mtx_idx][w_index] += cost_wrt_weight_deriv;
+            for weight_index in 0..self.size {
+                let cost_wrt_weight_deriv = input * learn_data.node_values[weight_index];
+                *self.weight_cost_gradient_mut(prev_neuron, weight_index) += cost_wrt_weight_deriv;
             }
         }
 
@@ -180,19 +184,18 @@ impl Layer {
         let alpha = learn_rate / batch_size as f64;
         let weight_decay = 1.0 - regularization * alpha;
 
-        for (w_mtx_idx, w_mtx) in self.weights.iter_mut().enumerate() {
-            for (w_index, w) in w_mtx.iter_mut().enumerate() {
-                let weight_gradient_curr = self.cost_gradient_weights[w_mtx_idx][w_index];
+        for prev_neuron in 0..self.prev_size {
+            for weight_index in 0..self.size {
+                let weight_gradient_curr = self.weight_cost_gradient(prev_neuron, weight_index);
 
                 // Get&set velocity
-                let velocity = (self.weight_velocities[w_mtx_idx][w_index] * momentum) - (weight_gradient_curr * alpha);
-                self.weight_velocities[w_mtx_idx][w_index] = velocity;
+                let velocity = (self.weight_velocity(prev_neuron, weight_index) * momentum) - (weight_gradient_curr * alpha);
+                *self.weight_velocity_mut(prev_neuron, weight_index) = velocity;
 
                 // Apply & clear
-                // println!("[{w_mtx_idx}] -= {}", weight_gradient_curr * alpha + velocity);
-                // println!("L{} | {} - {}", self.index, format_f64(w), format_f64(&((*w * weight_decay + velocity) - *w)));
-                *w = *w * weight_decay + velocity;
-                self.cost_gradient_weights[w_mtx_idx][w_index] = 0.0;
+                let weight_mut = self.weight_mut(prev_neuron, weight_index);
+                *weight_mut = *weight_mut * weight_decay + velocity;
+                *self.weight_cost_gradient_mut(prev_neuron, weight_index) = 0.0;
             }
         }
 
@@ -206,6 +209,36 @@ impl Layer {
             self.cost_gradient_biases[i] = 0.0;
         }
     }
+
+    /// Get a reference to a weight
+    /// `neuron_index` is the index of the neuron "owning" the 
+    /// weight matrix we'd like to index, and the `next_neuron_index`
+    /// is the index of the next layer neuron which the weight connects to
+    fn weight(&self, neuron_index: usize, next_neuron_index: usize) -> &f64 {
+        &self.weights[next_neuron_index * self.prev_size + neuron_index]
+    }
+    fn weight_mut(&mut self, neuron_index: usize, next_neuron_index: usize) -> &mut f64 {
+        &mut self.weights[next_neuron_index * self.prev_size + neuron_index]
+    }
+
+    /// Get a reference to a weight's velocity
+    /// Check docs for `weight` method
+    fn weight_velocity(&self, neuron_index: usize, next_neuron_index: usize) -> &f64 {
+        &self.weight_velocities[next_neuron_index * self.prev_size + neuron_index]
+    }
+    fn weight_velocity_mut(&mut self, neuron_index: usize, next_neuron_index: usize) -> &mut f64 {
+        &mut self.weight_velocities[next_neuron_index * self.prev_size + neuron_index]
+    }
+
+
+    /// Get a reference to a weight's gradient
+    /// Check docs for `weight` method
+    fn weight_cost_gradient(&self, neuron_index: usize, next_neuron_index: usize) -> &f64 {
+        &self.cost_gradient_weights[next_neuron_index * self.prev_size + neuron_index]
+    }
+    fn weight_cost_gradient_mut(&mut self, neuron_index: usize, next_neuron_index: usize) -> &mut f64 {
+        &mut self.cost_gradient_weights[next_neuron_index * self.prev_size + neuron_index]
+    }
 }
 
 /* Debug implementation */
@@ -213,10 +246,10 @@ impl std::fmt::Debug for Layer {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "   ").unwrap();
 
-        for (_, w_mtx) in self.weights.iter().enumerate() {
+        for i in 0..self.prev_size {
             write!(f, "[ ").unwrap();
-            for (_, w) in w_mtx.iter().enumerate() {
-                write!(f, "{} ", format!("{:.3}", w)).unwrap();
+            for j in 0..self.size {
+                write!(f, "{} ", format!("{:.3}", self.weight(i, j))).unwrap();
             }
             write!(f, "] ").unwrap();
         }
