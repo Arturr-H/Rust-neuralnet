@@ -2,9 +2,12 @@
 
 /* Imports */
 pub mod utils;
+mod data_handler;
+
 mod mnist_reader;
-use activation::{Activation, NetworkActivations};
+use activation::{Activation, ActivationType, NetworkActivations};
 use cost::Cost;
+use data_handler::{load_data, modify_images, print_matrix, save_data, save_weight_layer_image};
 use learn_rate::LearnRate;
 use mnist_reader::{ Mnist, format_data };
 use crate::{mnist_reader::print_image, network::Network};
@@ -33,21 +36,20 @@ mod handler;
 
 fn main() -> () {
     let mut nn = network::Network::new(
-        [784, 128, 128, 10],
-        100,
-        LearnRate::new(0.05, 0.001),
+        Some("./src/saves/network_v2"),
+        [100, 100],
+        40,
+        LearnRate::new_range_with_step(0.1..0.000001, 2.0),
         0.9,
         0.1,
         cost::CostType::CrossEntropy,
-        NetworkActivations::new(Activation::leaky_relu(), Activation::sigmoid())
+        NetworkActivations::new(ActivationType::LeakyRelu, ActivationType::Softmax),
+        is_correct
     );
-    let mnist_data = Mnist::new("dataset/");
-    // let data: Vec<(Vec<f64>, Vec<f64>)> = format_data(&mnist_data.train_data, &mnist_data.train_labels);
-    // nn.train(data);
-    let mut nn = Network::retrieve_from_save("./src/saves/network");
+    let test_data = load_data("./dataset/transformed/test_data");
+    let train_data = load_data("./dataset/transformed/train_data");
+    nn.train(train_data);
 
-
-    let test_data: Vec<(Vec<f64>, Vec<f64>)> = format_data(&mnist_data.train_data, &mnist_data.train_labels);
     for (input, expected_output) in test_data {
         let prediction = nn.classify(&input);
         let net_predict = prediction.iter()
@@ -69,5 +71,13 @@ fn main() -> () {
         };
     }
 }
+fn is_correct(input: &Vec<f64>, expected: &Vec<f64>) -> bool {
+    let predict_max_idx = input
+        .iter()
+        .enumerate()
+        .max_by(|(_, a), (_, b)| a.total_cmp(b))
+        .map(|(index, _)| index).unwrap();
+    let expect_idx = expected.iter().position(|&e| e == 1.0).unwrap();
 
-
+    predict_max_idx == expect_idx
+}

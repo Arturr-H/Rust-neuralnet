@@ -19,8 +19,8 @@ const IMAGES_MAGIC_NUMBER: usize = 2051;
 const LABELS_MAGIC_NUMBER: usize = 2049;
 const NUM_TRAIN_IMAGES: usize = 60_000;
 const NUM_TEST_IMAGES: usize = 10_000;
-const IMAGE_ROWS: usize = 28;
-const IMAGE_COLUMNS: usize = 28;
+const IMAGE_ROWS: usize = 10;
+const IMAGE_COLUMNS: usize = 10;
 
 pub struct Mnist {
     // Arrays of images.
@@ -155,16 +155,14 @@ impl Mnist {
 /// // Print one image (the one at index 5).
 /// print_image(&mnist.train_data[5], mnist.train_labels[5]);
 /// ```
+const ASCII: [char; 9] = ['∙', '.', ',', '"', '+', '*', 'o', '=', '@'];
 pub fn print_image(image: Vec<f64>, label: u8) {
 
     // Print each row.
     for row in 0..IMAGE_ROWS {
         for col in 0..IMAGE_COLUMNS {
-            if image[row * IMAGE_COLUMNS + col] == 0.0 {
-                print!("__");
-            } else {
-                print!("##");
-            }
+            let idx = ((ASCII.len() - 1) as f64 * image[row * IMAGE_COLUMNS + col]) as usize;
+            print!("{}{}", ASCII[idx], ASCII[idx]);
         }
         println!();
     }

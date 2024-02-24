@@ -14,7 +14,8 @@ use crate::{
 /// hyperparameters like learn_rate and momentum
 #[derive(Deserialize, Serialize)]
 pub struct Network {
-    layers: Vec<Layer>,
+    pub layers: Vec<Layer>,
+    save_path: Option<String>,
 
     #[serde(skip)]
     layer_learn_data: Vec<LearnData>,
@@ -36,6 +37,7 @@ impl Network {
     /// Documentation on how individual layers are initialized are
     /// located in `layer.rs`
     pub fn new<const N: usize>(
+        save_path: Option<impl ToString>,
         layer_sizes: [usize; N],
         batch_size: usize,
         learn_rate: LearnRate,
@@ -65,7 +67,8 @@ impl Network {
         Self {
             layers, cost, layer_learn_data,
             learn_rate, batch_size, momentum,
-            regularization, is_correct: Some(is_correct)
+            regularization, is_correct: Some(is_correct),
+            save_path: save_path.and_then(|e| Some(e.to_string()))
         }
     }
 
@@ -129,7 +132,9 @@ impl Network {
 
         // Save network
         println!("{}", colorize(Color::Yellow, "▶︎▶︎ Saving network ◀︎◀︎"));
-        self.save("./src/saves/network_v2");
+        if let Some(save_path) = &self.save_path {
+            self.save(&save_path);
+        }
     }
 
     pub fn update_gradients(&mut self, datapoint: (&Vec<f64>, Vec<f64>)) -> () {
@@ -231,18 +236,4 @@ fn iteration_status_display(
             stylize(Style::Dim, colorize(Color::Black, "◼︎".repeat((50.0 * (1.0 - avg_correct_)) as usize)))
         )
     );
-    // println!("[ {}] {} [ {}]      ô {} {}",
-    //     colorize(Color::White, display_array(predicted_output)),
-    //     colorize(Color::Blue, stylize(Style::Dim, "◼︎◼︎◼︎◼︎◼︎◼︎►")),
-    //     colorize(Color::White, display_array(expected_output)),
-
-    //     stylize(Style::Italic, stylize(Style::Bold, "mse")),
-    //     predicted_output.iter().zip(expected_output).map(|(o, t)| {
-    //         let diff = (o - t).powi(2);
-    //         let col = if diff.abs() > ERR_DIFF_THRESH { Color::Red } else { Color::Blue };
-    //         colorize(col, stylize(Style::Reverse, format!(" {:.3} ", diff)))
-    //     }).collect::<String>()
-    // );
-
-    // println!("{:?}", net.layer_learn_data.iter().map(|e| &e.node_values).collect::<Vec<&Vec<f64>>>());
 }

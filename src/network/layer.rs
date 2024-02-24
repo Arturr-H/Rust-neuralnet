@@ -3,7 +3,7 @@ use rand::thread_rng;
 use rand::distributions::Distribution;
 use rand_distr::Normal;
 use serde_derive::{Deserialize, Serialize};
-use crate::{activation::Activation, cost::Cost, learn_data::LearnData};
+use crate::{activation::{Activation, ActivationType}, cost::Cost, learn_data::LearnData};
 
 /// A neural network layer, storing weights, biases
 /// and training data.
@@ -29,8 +29,7 @@ pub struct Layer {
     bias_velocities: Vec<f64>,
 
     /// The activation function used for the current layer.
-    #[serde(skip)] 
-    activation: Activation,
+    activation: ActivationType,
 
     /// The amount of neurons in the current layer
     size: usize,
@@ -54,7 +53,7 @@ impl Layer {
     /// 
     /// I'll use the Kaiming He Initialization because I'm
     /// primarily using ReLU / leaky ReLU for activation fns
-    pub fn new(prev_layer_size: usize, current_layer_size: usize, activation: Activation) -> Self {
+    pub fn new(prev_layer_size: usize, current_layer_size: usize, activation: ActivationType) -> Self {
         // ? TODO: Look into other bias init implementations
         let biases = vec![0.1; current_layer_size as usize];
 
@@ -108,7 +107,7 @@ impl Layer {
 
         // Store learn data
         for i in 0..self.size {
-            let activated = (self.activation.function)(output[i]);
+            let activated = (ActivationType::into_activation(&self.activation).function)(&output, i);
             if save {
                 learn_data.weighted_inputs[i] = output[i];
                 learn_data.activations[i] = activated;
@@ -130,7 +129,7 @@ impl Layer {
         let output_cost_deriv = (cost.derivative)(&learn_data.activations, &expected_outputs);
         for (index, node_value) in learn_data.node_values.iter_mut().enumerate() {
             let d_c_wrt_a = output_cost_deriv[index];
-            let d_a_wrt_z = (self.activation.derivative)(learn_data.weighted_inputs[index]);
+            let d_a_wrt_z = (ActivationType::into_activation(&self.activation).derivative)(&learn_data.weighted_inputs, index);
             *node_value = d_c_wrt_a * d_a_wrt_z;
         }
     }
@@ -150,7 +149,7 @@ impl Layer {
                 node_value += old_layer.weight(node_index, i) * old_node_values[i];
             }
 
-            let a_wrt_z_deriv = (self.activation.derivative)(learn_data.weighted_inputs[node_index]);
+            let a_wrt_z_deriv = (ActivationType::into_activation(&self.activation).derivative)(&learn_data.weighted_inputs, node_index);
             // TODO RESEARCH WHY NET PERFORMS BETTER WITHOUT a_wrt_z_deriv
             learn_data.node_values[node_index] = node_value * a_wrt_z_deriv;
         }
@@ -214,11 +213,14 @@ impl Layer {
     /// `neuron_index` is the index of the neuron "owning" the 
     /// weight matrix we'd like to index, and the `next_neuron_index`
     /// is the index of the next layer neuron which the weight connects to
-    fn weight(&self, neuron_index: usize, next_neuron_index: usize) -> &f64 {
+    pub fn weight(&self, neuron_index: usize, next_neuron_index: usize) -> &f64 {
         &self.weights[next_neuron_index * self.prev_size + neuron_index]
     }
     fn weight_mut(&mut self, neuron_index: usize, next_neuron_index: usize) -> &mut f64 {
         &mut self.weights[next_neuron_index * self.prev_size + neuron_index]
+    }
+    pub fn bias(&self, neuron_index: usize) -> &f64 {
+        &self.biases[neuron_index]
     }
 
     /// Get a reference to a weight's velocity
@@ -239,6 +241,9 @@ impl Layer {
     fn weight_cost_gradient_mut(&mut self, neuron_index: usize, next_neuron_index: usize) -> &mut f64 {
         &mut self.cost_gradient_weights[next_neuron_index * self.prev_size + neuron_index]
     }
+
+    pub fn size(&self) -> usize { self.size }
+    pub fn prev_size(&self) -> usize { self.prev_size }
 }
 
 /* Debug implementation */
